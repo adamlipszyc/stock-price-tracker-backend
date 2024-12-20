@@ -2,11 +2,18 @@ const express = require('express');
 const axios = require('axios');
 const db = require('./database');
 const cors = require('cors');
+const fs = require('fs');
+const { error } = require('console');
 
 
 
 require('dotenv').config();
 
+const isDevMode = process.argv.includes('-dev');
+const stockPrices = new Set();
+const timeSeries = new Set();
+
+console.log(isDevMode);
 
 
 const app = express();
@@ -51,18 +58,43 @@ app.delete('/api/stocks/:id', (req, res) => {
 // Get stock price data from Alpha Vantage
 app.get('/api/stock-price/:symbol', async (req, res) => {
     const { symbol } = req.params;
-    const apiKey = process.env.ALPHA_VANTAGE_API_KEY;
-    const apiUrl = `https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&symbol=${symbol}&interval=1min&apikey=${apiKey}`;
-    console.log("Calling API");
-    try {
-        const response = await axios.get(apiUrl);
-        const timeSeries = response.data['Time Series (1min)'];
-        const latestTime = Object.keys(timeSeries)[0];
-        const latestPrice = parseFloat(timeSeries[latestTime]['1. open']);
-        console.log(latestPrice);
-        res.json({ price: latestPrice, symbol });
+    const output_file = `./stock-price-data/${symbol}StockPrice.json`;
+
+    try{
+        if (isDevMode && stockPrices.has(symbol)) {
+            console.log(`getting ${symbol} stock price from cache`);
+            const data = fs.readFileSync(output_file, 'utf8');
+            res.json(JSON.parse(data));
+           
+        } else {
+            const apiKey = process.env.ALPHA_VANTAGE_API_KEY;
+            const apiUrl = `https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&symbol=${symbol}&interval=1min&apikey=${apiKey}`;
+            console.log("Calling API");
+            const response = await axios.get(apiUrl);
+            const timeSeries = response.data['Time Series (1min)'];
+            const latestTime = Object.keys(timeSeries)[0];
+            const latestPrice = parseFloat(timeSeries[latestTime]['1. open']);
+            console.log(latestPrice);
+            const resulting_data = { price: latestPrice, symbol };
+            fs.writeFileSync(output_file, JSON.stringify(resulting_data, null, 2));
+            res.json(resulting_data);
+            stockPrices.add(symbol);
+           
+        }
     } catch (error) {
         res.status(500).json({ error: error.message });
+    }
+    
+});
+
+app.get('/api/stocks/listing', async (req, res) => {
+    
+    console.log("Getting all stock pre-requisite data");
+    try {
+        const data = fs.readFileSync('./stockSymbols.json', 'utf8');
+        res.json({ info: JSON.parse(data)});
+    } catch (error) {
+        res.status(500).json({ error: error.message})
     }
 });
 
@@ -71,16 +103,27 @@ app.get('/api/stock-price/:symbol', async (req, res) => {
 
 app.get('/api/stock-time-series/:symbol', async (req, res) => {
     const { symbol } = req.params;
-    const apiKey = process.env.ALPHA_VANTAGE_API_KEY;
-    const apiUrl = `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=${symbol}&apikey=${apiKey}`;
-    console.log("getting time series data");
-    console.log("Calling API");
+    const output_file = `./time-series-data/${symbol}TimeSeries.json`;
+
     try {
-      const response = await axios.get(apiUrl);
-      console.log(response.data);
-      res.json(response.data);
+        if (isDevMode && timeSeries.has(symbol)) {
+            console.log(`Getting ${symbol} time series data from cache`);
+            const data = fs.readFileSync(output_file, 'utf8');
+            res.json(JSON.parse(data))
+        } else {
+            const apiKey = process.env.ALPHA_VANTAGE_API_KEY;
+            const apiUrl = `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=${symbol}&apikey=${apiKey}`;
+            console.log("getting time series data");
+            console.log("Calling API");
+            const response = await axios.get(apiUrl);
+            console.log(response.data);
+            fs.writeFileSync(output_file, JSON.stringify(response.data, null, 2));
+            timeSeries.add(symbol);
+            res.json(response.data);
+           
+        }
     } catch (error) {
-      res.status(500).json({ error: error.message });
+        res.status(500).json({ error: error.message });
     }
 });
 
